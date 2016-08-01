@@ -1,0 +1,136 @@
+.TH mprune 1 "2016" Manta "mprune"
+.SH NAME
+.PP
+mprune \- prune Manta objects in date\-organized directory trees
+.SH SYNOPSIS
+.PP
+\fB\fCmprune \-\-policy=POLICY [\-\-after DATETIME] [\-\-before DATETIME] [\-\-expect PATTERN ...] [\-\-time\-format TIME_FORMAT] [\-n | \-\-dry\-run] PATH\fR
+.SH DESCRIPTION
+.PP
+The \fB\fCmprune\fR tool implements simple retention policies for data stored in Manta
+that is organized in a date\-based directory structure.  While this tool only
+supports a simple retention policy today, it could form the basis of more
+complex retention policies by running the tool multiple times using different
+policies over different date ranges.
+.PP
+\fB\fCmprune\fR scans the directory tree \fB\fCPATH\fR and identifies which objects should be
+kept and removed according to a retention policy \fB\fCPOLICY\fR\&.  The timestamp
+associated with objects is inferred from the directory structure.  By default,
+\fB\fCmprune\fR assumes directories are organized as \fB\fCPATH/YYYY/MM/DD\fR, where \fB\fCPATH\fR is
+the argument to the tool, \fB\fCYYYY\fR is the 4\-digit year, \fB\fCMM\fR is the 2\-digit month
+number (1\-12), and \fB\fCDD\fR is the 2\-digit day\-of\-month number (1\-31).  Object
+basenames, modification times, and other metadata are not used.  You can
+configure the expected directory structure using the \fB\fC\-\-time\-format\fR option.
+.PP
+There is currently only one supported \fB\fCPOLICY\fR, which is called \fB\fCtwicemonthly\fR\&.
+This policy attempts to preserve objects from days 1 and 15, but will be
+satisfied with any two days of each month as long as one is from days 1\-14 and
+the other is from day 15 or later.
+.PP
+With the \fB\fC\-\-expect\fR option, one or more regular expressions can be specified
+that describe objects that should appear with each day in order for that day to
+be considered eligible for keeping.  With some data sets, a given day's worth of
+data may be missing for some reason or another.  This option allows users to
+ensure that \fB\fCmprune\fR doesn't end up retaining a day that's actually missing the
+expected objects (for whatever reason) and then removing all nearby days.
+.SH OPTIONS
+.PP
+Unless otherwise specified, when the same option is specified multiple times,
+only the last instance of each option is used.
+.TP
+\fB\fC\-\-after TIMESTAMP, \-\-before TIMESTAMP\fR
+Only examine directories and objects associated with times after (or before)
+\fB\fCTIMESTAMP\fR, which should be an ISO8601 timestamp (or just the date portion of
+such a string).  See above for how objects are associated with particular
+times.  \fB\fCmprune\fR prunes by time as it traverses the directory structure, so
+that it will not even descend into \fB\fC$PATH/2015\fR if \fB\fC\-\-after 2016\-01\-01\fR was
+specified.
+.TP
+\fB\fC\-n\fR, \fB\fC\-\-dry\-run\fR
+Do not actually remove any objects or directories, but print out what would be
+done.
+.TP
+\fB\fC\-\-expect PATTERN\fR
+Require that each group of data that \fB\fCmprune\fR decides to retain contains an
+object matching JavaScript regular expression \fB\fCPATTERN\fR\&.  For example, if
+objects are stored in directories by day, then each directory must have an
+object matching each of the \fB\fCPATTERN\fRs specified with \fB\fC\-\-expect\fR\&.  The idea is
+that if each day is supposed to contain a specific object, and that object is
+missing, then \fB\fCmprune\fR will assume that day's data is already missing.  In
+that case, the policy will generally select a different day to preserve.  See
+EXAMPLES below.  This option may be specified multiple times, with the result
+that each of the specified \fB\fCPATTERN\fRs must be present in a given day's
+directory for that directory to be eligible to be retained.
+.TP
+\fB\fC\-\-policy POLICY\fR
+Specifies a built\-in retention policy to use.  The only supported policy is
+\fB\fCtwicemonthly\fR, which is described above.
+.TP
+\fB\fC\-\-time\-format TIME_FORMAT\fR
+Configures how directories under \fB\fCPATH\fR are organized by timestamp.
+\fB\fCTIME_FORMAT\fR is a printf\-like format string that supports expansions "%Y",
+"%m", "%d", and "%H", each matching the corresponding expansion in
+.BR strftime (3C).  
+These specifiers must appear in order from most specific to
+least specific (e.g., year, then month, then day). The default \fB\fCTIME_FORMAT\fR
+is equivalent to \fB\fC"%Y/%m/%d"\fR\&.
+.SH EXAMPLES
+.PP
+Manta stores daily backups of its own Manatee databases under
+\fB\fC/poseidon/stor/manatee_backups/$SHARDNAME/YYYY/MM/DD\fR\&.  These can be pruned
+using this tool.  This example prunes shard "2.moray.emy\-10.joyent.us", keeping
+only backups from the 1st and 15th of each month, up through June 30, 2016.
+Backups after July 1, 2016 are untouched:
+.PP
+.RS
+.nf
+mprune \-\-policy=twicemonthly \-\-before=2016\-06\-30 /poseidon/stor/manatee_backups/2.moray.emy\-10.joyent.us
+.fi
+.RE
+.PP
+Now, suppose that the backup from June 1, 2016 was already missing as a result
+of a bug, a transient error, or some operator action.  With the above
+invocation, the dumps from June 2 through June 14, 2016 would be removed,
+leaving the user with no backups from June 1 through June 15.  To avoid this,
+you can specify the \fB\fC\-\-expect\fR option to describe objects you expect to appear
+in each day's directories:
+.PP
+.RS
+.nf
+mprune \-\-policy=twicemonthly \-\-expect='moray.*.gz' \-\-before=2016\-06\-30 /poseidon/stor/manatee_backups/2.moray.emy\-10.joyent.us
+.fi
+.RE
+.PP
+In this case, \fB\fCmprune\fR will see that the expected objects are missing from June
+1 and elect to retain the objects from June 2 instead.  If no objects are found
+from June 2 through June 14, or no objects are found from June 15 through the
+end of the month, then \fB\fCmprune\fR will keep \fIall\fP objects that month.
+.SH ENVIRONMENT
+.PP
+This tool honors the same environment variables used by the official Manta CLI
+tools, including \fB\fCMANTA_USER\fR, \fB\fCMANTA_SUBUSER\fR, \fB\fCMANTA_KEY_ID\fR, \fB\fCMANTA_URL\fR, and
+\fB\fCMANTA_TLS_INSECURE\fR\&.  See the documentation for the Manta CLI tools for
+information about how these variables are used.  When using \fB\fCmprune\fR, these
+environment variables are the only way to configure these settings.
+.PP
+For debugging, this tool honors the convention of using \fB\fCLOG_LEVEL\fR to determine
+the debug level for the internal bunyan log.  This behavior may change in future
+versions.
+.SH EXIT STATUS
+.TP
+\fB\fC0\fR
+Success
+.TP
+\fB\fC1\fR
+Generic failure.
+.TP
+\fB\fC2\fR
+The command\-line options were not valid.
+.SH SEE ALSO
+.PP
+.BR mfind (1), 
+.BR mrm (1), 
+.BR strftime (3C)
+.SH COPYRIGHT
+.PP
+Copyright (c) 2016 Joyent Inc.

@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+/* vim: set ft=javascript: */
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Copyright (c) 2016, Joyent, Inc.
+ */
+
+/*
+ * mprune: prune Manta objects in date-organized directory trees
+ */
+
+var mod_bunyan = require('bunyan');
+var mod_cmdutil = require('cmdutil');
+var mod_getopt = require('posix-getopt');
+var mod_manta = require('manta');
+var mod_path = require('path');
+var mod_timefilter = require('timefilter');
+
+var mod_mprune = require('../lib/mprune');
+var VError = require('verror');
+
+function main()
+{
+	var optstr, parser, option, t, paths;
+	var log, manta, mprune;
+	var timefmt = '%Y/%m/%d';
+	var pruneargs = {
+	    'p_start': null,
+	    'p_end': null,
+	    'p_policy': null,
+	    'p_force': false,
+	    'p_dryrun': false,
+	    'p_root': null,
+	    'p_expect': [],
+	    'p_log': null,
+	    'p_timefmt': null,
+	    'p_manta': null
+	};
+
+	mod_cmdutil.configure({
+	    'usageMessage': 'Prune Manta objects in date-organized ' +
+		'directory trees',
+	    'synopses': [
+		'[--after DATETIME] [--before DATETIME] --policy=POLICY ' +
+		    '[--expect PATTERN] [--time-format TIME_FORMAT] ' +
+		    '[-n | --dry-run] PATH'
+	    ]
+	});
+
+	/*
+	 * The uppercase single-letter options are deliberately undocumented and
+	 * may be changed in the future.
+	 */
+	optstr = [
+	    'A:(after)',
+	    'B:(before)',
+	    'E:(expect)',
+	    'P:(policy)',
+	    'T:(time-format)',
+	    'n(dry-run)'
+	].join('');
+
+	parser = new mod_getopt.BasicParser(optstr, process.argv);
+	while ((option = parser.getopt()) !== undefined) {
+		switch (option.option) {
+		case 'A':
+		case 'B':
+			/*
+			 * On the one hand, it's totally reasonable to organize
+			 * data in Manta from long before Manta itself existed
+			 * (e.g., digitized data from some other source).  On
+			 * the other hand, it's not all that likely such data
+			 * would be pruned using this tool, and it's far more
+			 * likely that if the user specifies a timestamp outside
+			 * this range, then they fat-fingered something, and
+			 * it's useful to point that out to them.  It is the
+			 * sincere hope of the author that this tool survives
+			 * long enough to need to update this range.
+			 */
+			t = new Date(option.optarg);
+			if (isNaN(t.getTime()) ||
+			    t.getTime() < Date.parse('1990-01-01') ||
+			    t.getTime() > Date.parse('2029-12-31')) {
+				mod_cmdutil.usage('unsupported date/time: %s',
+				    option.optarg);
+			}
+
+			if (option.option == 'A') {
+				pruneargs.p_start = t;
+			} else {
+				pruneargs.p_end = t;
+			}
+
+			break;
+
+		case 'E':
+			try {
+				t = new RegExp(option.optarg);
+			} catch (ex) {
+				mod_cmdutil.usage(new VError(
+				    'bad argument for --expect: %s',
+				    option.optarg));
+			}
+			pruneargs.p_expect.push(t);
+			break;
+
+		case 'P':
+			t = mod_mprune.policyForName(option.optarg);
+			if (t instanceof Error) {
+				mod_cmdutil.usage(t);
+			}
+
+			pruneargs.p_policy = t;
+			break;
+
+		case 'T':
+			timefmt = option.optarg;
+			break;
+
+		case 'n':
+			pruneargs.p_dryrun = true;
+			break;
+
+		default:
+			mod_cmdutil.usage();
+			break;
+		}
+	}
+
+	if (pruneargs.p_policy === null) {
+		mod_cmdutil.usage('must specify --policy');
+	}
+
+	if (pruneargs.p_start !== null && pruneargs.p_end !== null &&
+	    pruneargs.p_start.getTime() >= pruneargs.p_end.getTime()) {
+		mod_cmdutil.usage('timestamp for --after must come before ' +
+		    'timestamp for --before');
+	}
+
+	paths = process.argv.slice(parser.optind());
+	if (paths.length != 1) {
+		mod_cmdutil.usage();
+	}
+
+	pruneargs.p_root = paths[0];
+	pruneargs.p_timefmt = mod_timefilter.createTimeStringFilter(
+	    mod_path.join(pruneargs.p_root, timefmt));
+
+	if (pruneargs.p_timefmt instanceof Error) {
+		mod_cmdutil.fail(new VError(pruneargs.p_timefmt,
+		    'bad argument for --time-format'));
+	}
+
+	log = new mod_bunyan({
+	    'name': 'mprune',
+	    'level': process.env['LOG_LEVEL'] || 'fatal'
+	});
+
+	manta = mod_manta.createBinClient({
+	    'log': log.child({ 'component': 'MantaClient' })
+	});
+
+	/*
+	 * Remove the 'uncaughtException' listener that the Manta client
+	 * constructor adds.
+	 */
+	process.removeAllListeners('uncaughtException');
+
+	pruneargs.p_log = log;
+	pruneargs.p_manta = manta;
+
+	/*
+	 * TODO make sure we don't exit 0 unexpectedly.
+	 */
+	mprune = mod_mprune.mprune(pruneargs);
+	mprune.on('error', function (err) { mod_cmdutil.fail(err); });
+	mprune.on('warn', function (context, kind, error) {
+		mod_cmdutil.warn('%s: %s', context.label(), error.message);
+	});
+}
+
+main();
