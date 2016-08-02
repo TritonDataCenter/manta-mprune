@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+/* vim: set ft=javascript: */
+
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Copyright (c) 2016, Joyent, Inc.
+ */
+
+/*
+ * mktree: create a directory tree useful for testing mprune
+ */
+
+var mod_assertplus = require('assert-plus');
+var mod_bunyan = require('bunyan');
+var mod_cmdutil = require('cmdutil');
+var mod_extsprintf = require('extsprintf');
+var mod_manta = require('manta');
+var mod_path = require('path');
+var mod_stream = require('stream');
+var mod_vasync = require('vasync');
+
+var sprintf = mod_extsprintf.sprintf;
+
+function main()
+{
+	var mktreeArgs;
+
+	mod_cmdutil.configure({
+	    'synopses': [ 'DEST_PATH' ],
+	    'usageMessage': 'create a directory tree for testing mprune'
+	});
+
+	mktreeArgs = {
+	    'log': null,
+	    'manta': null,
+	    'root': null
+	};
+
+	if (process.argv.length != 3) {
+		mod_cmdutil.usage();
+	}
+
+	mktreeArgs.root = process.argv[2];
+	mktreeArgs.log = new mod_bunyan({
+	    'name': 'mktree',
+	    'level': process.env['LOG_LEVEL'] || 'fatal'
+	});
+	mktreeArgs.manta = mod_manta.createBinClient({
+	    'log': mktreeArgs.log.child({
+	        'component': 'MantaClient'
+	    })
+	});
+
+	mktree(mktreeArgs, function (err) {
+		if (err) {
+			mod_cmdutil.fail(err);
+		}
+
+		mktreeArgs.manta.close();
+	});
+}
+
+function mktree(args, callback)
+{
+	var mktreeop, inputs, i, daypart;
+
+	mod_assertplus.object(args, 'args');
+	mod_assertplus.object(args.log, 'args.log');
+	mod_assertplus.object(args.manta, 'args.manta');
+	mod_assertplus.string(args.root, 'args.root');
+
+	mktreeop = {};
+	mktreeop.mkt_log = args.log;
+	mktreeop.mkt_manta = args.manta;
+	mktreeop.mkt_root = args.root;
+
+	inputs = [];
+	for (i = 1; i <= 31; i++) {
+		daypart = sprintf('%02d', i);
+		inputs.push({
+		    'mktree': mktreeop,
+		    'type': 'mkdirp',
+		    'path': mod_path.join(mktreeop.mkt_root,
+		        '2014', '07', daypart)
+		});
+
+		inputs.push({
+		    'mktree': mktreeop,
+		    'type': 'put',
+		    'path': mod_path.join(mktreeop.mkt_root,
+		        '2014', '07', daypart, 'some-obj')
+		});
+	}
+
+	mktreeop.mkt_pipeline = mod_vasync.forEachPipeline({
+	    'func': mktreeOne,
+	    'inputs': inputs
+	}, callback);
+}
+
+function mktreeOne(args, callback)
+{
+	var mktreeop, s;
+
+	mod_assertplus.object(args, 'args');
+	mod_assertplus.object(args.mktree, 'args.mktree');
+	mod_assertplus.string(args.type, 'args.type');
+	mod_assertplus.string(args.path, 'args.path');
+
+	mktreeop = args.mktree;
+	if (args.type == 'mkdirp') {
+		console.log('mkdirp %s', JSON.stringify(args.path));
+		mktreeop.mkt_manta.mkdirp(args.path, callback);
+	} else {
+		console.log('put %s', JSON.stringify(args.path));
+		mod_assertplus.equal(args.type, 'put');
+		s = new mod_stream.PassThrough();
+		s.end('test content');
+		mktreeop.mkt_manta.put(args.path, s, callback);
+	}
+}
+
+main();
