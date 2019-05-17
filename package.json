@@ -1,32 +1,37 @@
 {
-	"name": "manta-mprune",
-	"description": "prune Manta objects in date-organized directory trees",
-	"version": "1.0.0",
-	"private": "true",
-	"bin": {
-		"mprune": "./bin/mprune"
-	},
-        "man": {
-                "mprune": "./man/man1/mprune"
-        },
-	"repository": {
-		"type": "git",
-		"url": "git://github.com/joyent/manta-mprune.git"
-	},
-	"dependencies": {
-		"assert-plus": "^1.0.0",
-		"bunyan": "1.8.1",
-		"cmdutil": "^1.1.0",
-		"extsprintf": "^1.3.0",
-		"jsprim": "^1.3.0",
-		"manta": "^3.0.0",
-		"manta-finder": "^1.0.0",
-		"posix-getopt": "^1.2.0",
-		"timefilter": "^1.0.0",
-		"vasync": "^1.6.4",
-		"verror": "^1.6.1",
-		"vstream": "^0.1.0"
-	},
-
-	"license": "MIT"
+  "name": "manta-mprune",
+  "description": "prune Manta objects in date-organized directory trees",
+  "version": "1.0.0",
+  "private": "true",
+  "bin": {
+    "mprune": "./bin/mprune"
+  },
+  "man": {
+    "mprune": "./man/man1/mprune"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/joyent/manta-mprune.git"
+  },
+  "dependencies": {
+    "assert-plus": "^1.0.0",
+    "bunyan": "1.8.1",
+    "cmdutil": "^1.1.0",
+    "extsprintf": "^1.3.0",
+    "jsprim": "^1.3.0",
+    "manta": "^5.2.1",
+    "manta-finder": "^1.0.0",
+    "posix-getopt": "^1.2.0",
+    "timefilter": "^1.0.0",
+    "vasync": "^1.6.4",
+    "verror": "^1.6.1",
+    "vstream": "^0.1.0",
+    "snyk": "^1.165.1"
+  },
+  "license": "MIT",
+  "scripts": {
+    "snyk-protect": "snyk protect",
+    "prepublish": "npm run snyk-protect"
+  },
+  "snyk": true
 }
